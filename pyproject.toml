@@ -9,3 +9,8 @@ requires-python = ">=3.9"
 homepage = "https://www.comfy.org/"
 repository = "https://github.com/comfyanonymous/ComfyUI"
 documentation = "https://docs.comfy.org/"
+
+# Custom metadata for stable release github action
+[tool.stable-release]
+cuda-version = "124"
+python-version = "3.12.7"

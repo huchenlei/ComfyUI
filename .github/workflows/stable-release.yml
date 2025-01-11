@@ -1,29 +1,12 @@
-
 name: "Release Stable Version"
 
 on:
-  workflow_dispatch:
-    inputs:
-      git_tag:
-        description: 'Git tag'
-        required: true
-        type: string
-      cu:
-        description: 'CUDA version'
-        required: true
-        type: string
-        default: "124"
-      python_minor:
-        description: 'Python minor version'
-        required: true
-        type: string
-        default: "12"
-      python_patch:
-        description: 'Python patch version'
-        required: true
-        type: string
-        default: "7"
-
+  pull_request:
+    branches:
+      - master
+      - main
+    paths:
+      - "pyproject.toml"
 
 jobs:
   package_comfy_windows:
@@ -32,25 +15,50 @@ jobs:
       packages: "write"
       pull-requests: "read"
     runs-on: windows-latest
+    if: >
+      contains(github.event.pull_request.labels.*.name, 'Release')
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
         with:
-          ref: ${{ inputs.git_tag }}
-          fetch-depth: 0
-          persist-credentials: false
+          python-version: "3.11"
+      # Read metadata from pyproject.toml
+      - name: Read metadata from pyproject.toml
+        run: |
+          python -c '
+          import tomllib
+          import os
+          with open("pyproject.toml", "rb") as f:
+              config = tomllib.load(f)
+              version = config["project"]["version"]
+              metadata = config["tool"]["stable-release"]
+
+              # Extract ComfyUI version
+              metadata["comfyui-version"] = version
+
+              # Extract Python version components
+              python_version = metadata.get("python-version", "3.11")
+              major, minor = python_version.split(".")[:2]
+              metadata["python-minor"] = minor
+
+              # Write all metadata to environment
+              for key, value in metadata.items():
+                  env_key = key.replace("-", "_")
+                  print(f"{env_key}={value}", file=open(os.environ["GITHUB_ENV"], "a"))
+          '
       - uses: actions/cache/restore@v4
         id: cache
         with:
           path: |
-            cu${{ inputs.cu }}_python_deps.tar
+            cu${{ env.cuda_version }}_python_deps.tar
             update_comfyui_and_python_dependencies.bat
-          key: ${{ runner.os }}-build-cu${{ inputs.cu }}-${{ inputs.python_minor }}
+          key: ${{ runner.os }}-build-cu${{ env.cuda_version }}-${{ env.python_minor }}
       - shell: bash
         run: |
-          mv cu${{ inputs.cu }}_python_deps.tar ../
+          mv cu${{ env.cuda_version }}_python_deps.tar ../
           mv update_comfyui_and_python_dependencies.bat ../
           cd ..
-          tar xf cu${{ inputs.cu }}_python_deps.tar
+          tar xf cu${{ env.cuda_version }}_python_deps.tar
           pwd
           ls
 
@@ -58,15 +66,15 @@ jobs:
         run: |
           cd ..
           cp -r ComfyUI ComfyUI_copy
-          curl https://www.python.org/ftp/python/3.${{ inputs.python_minor }}.${{ inputs.python_patch }}/python-3.${{ inputs.python_minor }}.${{ inputs.python_patch }}-embed-amd64.zip -o python_embeded.zip
+          curl https://www.python.org/ftp/python/{{ env.python_version }}/python-{{ env.python_version }}-embed-amd64.zip -o python_embeded.zip
           unzip python_embeded.zip -d python_embeded
           cd python_embeded
           echo ${{ env.MINOR_VERSION }}
-          echo 'import site' >> ./python3${{ inputs.python_minor }}._pth
+          echo 'import site' >> ./python3${{ env.python_minor }}._pth
           curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
           ./python.exe get-pip.py
-          ./python.exe -s -m pip install ../cu${{ inputs.cu }}_python_deps/*
-            sed -i '1i../ComfyUI' ./python3${{ inputs.python_minor }}._pth
+          ./python.exe -s -m pip install ../cu${{ env.cuda_version }}_python_deps/*
+            sed -i '1i../ComfyUI' ./python3${{ env.python_minor }}._pth
             cd ..
 
           git clone --depth 1 https://github.com/comfyanonymous/taesd
@@ -94,11 +102,13 @@ jobs:
           ls
 
       - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ComfyUI_windows_portable_nvidia.7z
-          tag: ${{ inputs.git_tag }}
-          overwrite: true
+          files: |
+            ComfyUI_windows_portable_nvidia.7z
+          tag_name: v${{ env.comfyui_version }}
+          draft: true
           prerelease: true
           make_latest: false
